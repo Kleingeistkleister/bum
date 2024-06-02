@@ -4,7 +4,7 @@
 # Copyright (C) 2016-2021  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import sys, optparse, os, re, logging , mcu
+import sys, optparse, os, re, logging
 import util, reactor, serialhdl, msgproto, clocksync
 
 help_txt = """
@@ -34,7 +34,7 @@ class KeyboardReader:
     def __init__(self, reactor, serialport, baud, canbus_iface, canbus_nodeid):
         self.serialport = serialport
         self.baud = baud
-        self.canbus_iface = "can0"
+        self.canbus_iface = canbus_iface
         self.canbus_nodeid = canbus_nodeid
         self.ser = serialhdl.SerialReader(reactor)
         self.reactor = reactor
@@ -54,8 +54,6 @@ class KeyboardReader:
             "LIST": self.command_LIST, "HELP": self.command_HELP,
         }
         self.eval_globals = {}
-        
-
     def connect(self, eventtime):
         self.output(help_txt)
         self.output("="*20 + " attempting to connect " + "="*20)
@@ -79,19 +77,23 @@ class KeyboardReader:
         self.mcu_freq = msgparser.get_constant_float('CLOCK_FREQ')
         self.output("="*20 + "       connected       " + "="*20)
         return self.reactor.NEVER
-    
-
-
+        
+        
     def output(self, msg):
         sys.stdout.write("%s\n" % (msg,))
         sys.stdout.flush()
+        
     def handle_default(self, params):
         tdiff = params['#receive_time'] - self.start_time
         msg = self.ser.get_msgparser().format_params(params)
         self.output("%07.3f: %s" % (tdiff, msg))
+        
     def handle_output(self, params):
         tdiff = params['#receive_time'] - self.start_time
         self.output("%07.3f: %s: %s" % (tdiff, params['#name'], params['#msg']))
+        
+        
+        
     def handle_suppress(self, params):
         pass
     def update_evals(self, eventtime):
@@ -234,10 +236,8 @@ class KeyboardReader:
                 self.local_commands[parts[0]](parts)
                 return None
         return line
-    
-    
     def process_kbd(self, eventtime):
-        self.data = self.controller.get_queue_command()
+        self.data += str(os.read(self.fd, 4096).decode())
 
         kbdlines = self.data.split('\n')
         for line in kbdlines[:-1]:
@@ -291,5 +291,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-

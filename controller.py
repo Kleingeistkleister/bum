@@ -18,7 +18,7 @@ class Controller:
         self.reactor = reactor.Reactor()
         self.oid = 0
         
-        self.dmx_universe
+        self.dmx_universe = 0
         self.dmx_start_address = 1
         self.dmx_channel_mode = 4
         self.serial_handler = None
@@ -30,18 +30,19 @@ class Controller:
         self.steppers = self.initialize_steppers()
         self.artnet = stupidArtnet.StupidArtnetServer()  
         
-        self.artnet_handler = self.artnet_reciever.register_listener( self.dmx_universe, callback_function=None)
+        self.artnet_handler = self.artnet.register_listener( self.dmx_universe, callback_function=None)
 
+        print(f"Controller created Universe: {self.dmx_universe} Start address: {self.dmx_start_address} Channel mode: {self.dmx_channel_mode}")
   
         
-        try:
-            self.reactor.run()
-        except KeyboardInterrupt:
-            sys.stdout.write("\n")
+        #try:
+            #self.reactor.run()
+        #except KeyboardInterrupt:
+            #sys.stdout.write("\n")
             
-        while not self.command_queue.empty():
-            self._serial.write(self.command_queue.get())
-            time.sleep(0.01)
+        #while not self.command_queue.empty():
+          #  self._serial.write(self.command_queue.get())
+           # time.sleep(0.01)
 
 
     def add_init_command(self, command):
@@ -154,6 +155,11 @@ class Controller:
                 crc &= 0xffff  # Keep CRC within 16 bits
         return crc
 
+    def get_config(self):
+        config_response = self.conector(self.commander.get_config())
+        return config_response
+    
+
 
     def finalize_config(self):
         finalize_cmd = self.commander.finalize_config()
@@ -162,19 +168,32 @@ class Controller:
         self.command_queue.put(finalize_cmd_with_crc)
 
 
+        def run(self):
+            while True:
+                if not self.command_queue.empty():
+                    self.serial_handler.write(self.command_queue.get())
+                    time.sleep(0.01)
+                else:
+                    time.sleep(0.01)
+
+
 def main():
-    
     serialport = "/dev/ttyACM0"  # Provide the serial port here
     baud = 1000000  # Provide the baud rate here
     canbus_iface = "can0"  # Provide the CAN bus interface here
-    canbus_nodeid = "807d45b5bfeb"  # Provide the CAN bus node ID here
-        
+    canbus_nodeid = 807d45b5bfeb  # Provide the CAN bus node ID here
+    print("Create Controller")
     controller = Controller()
-    serial_handler = connector.SerialHandler(self, self.reactor, serialport, baud, canbus_iface, canbus_nodeid)
+    print("Create Serial Handler")
+    serial_handler = connector.SerialHandler(controller, controller.reactor, serialport, baud, canbus_iface, canbus_nodeid)
+    
+    controller.set_serial_handler(serial_handler)
     # Access controller.stepper_commands to get the list of commands for initialization
     print("Stepper initialization commands:")
-    for cmd in controller.init_commands:
+    while not controller.command_queue.empty():
+        cmd = controller.command_queue.get()
         print(cmd)
 
 if __name__ == "__main__":
     main()
+

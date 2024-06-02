@@ -25,7 +25,8 @@ help_txt = """
 re_eval = re.compile(r'\{(?P<eval>[^}]*)\}')
 
 class SerialHandler:
-    def __init__(self,controller, reactor, serialport, baud=None, canbus_iface=None, canbus_nodeid=64):
+    def __init__(self,controller, reactor, serialport, baud=None, canbus_iface=None, canbus_nodeid=None):
+        
         self.serialport = serialport
         self.baud = baud
         self.canbus_iface = canbus_iface
@@ -51,6 +52,10 @@ class SerialHandler:
 
         self.data_interface = None
         self.serial_queue = queue.Queue()
+        
+        self.connect(self.reactor.monotonic())
+
+        print(f"SerialHandler created with serialport: {self.serialport} baud: {self.baud} canbus_iface: {self.canbus_iface} canbus_nodeid: {self.canbus_nodeid}")
         
     
 
@@ -243,6 +248,7 @@ class SerialHandler:
     
     def process_data_stream(self, eventtime):
         self.artnet_data = self.controller.command_queue.get().decode()
+        print(self.artnet_data)
         #self.data += str(os.read(self.fd, 4096).decode())
         data_streamlines = self.data.split('\n')
         for line in data_streamlines[:-1]:
@@ -262,3 +268,5 @@ class SerialHandler:
             except msgproto.error as e:
                 self.output("Error: %s" % (str(e),))
         self.data = data_streamlines[-1]
+
+
