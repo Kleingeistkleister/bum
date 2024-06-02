@@ -181,7 +181,7 @@ def main():
     serialport = "/dev/ttyACM0"  # Provide the serial port here
     baud = 1000000  # Provide the baud rate here
     canbus_iface = "can0"  # Provide the CAN bus interface here
-    canbus_nodeid = 807d45b5bfeb  # Provide the CAN bus node ID here
+    canbus_nodeid = int(807d45b5bfeb,16)  # Provide the CAN bus node ID here
     print("Create Controller")
     controller = Controller()
     print("Create Serial Handler")

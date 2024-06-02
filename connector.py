@@ -53,10 +53,10 @@ class SerialHandler:
         self.data_interface = None
         self.serial_queue = queue.Queue()
         
-        self.connect(self.reactor.monotonic())
+        
 
         print(f"SerialHandler created with serialport: {self.serialport} baud: {self.baud} canbus_iface: {self.canbus_iface} canbus_nodeid: {self.canbus_nodeid}")
-        
+        self.connect(self.reactor.monotonic())
     
 
     def connect(self, eventtime):
