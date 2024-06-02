@@ -2,6 +2,13 @@ import threading, stupidArtnet
 import time, queue, commander,connector, stepper, reactor, sys, logging
 from stupidArtnet import StupidArtnetServer
 
+#uuids
+# parra 1:  807d45b5bfeb
+# parra 2:
+# parra 3:
+# parra 4:  3d7db3a77d7d
+# parra 5:
+# parra 6: a2bb949d00a8
   
     
 class Controller:
@@ -134,6 +141,26 @@ class Controller:
         
     def alloc_oids(self):
         self.command_queue.put(self.commander.alloc_oids(self.oid))
+        
+    def calc_crc(data, poly=0x1021, init_crc=0xffff):
+        crc = init_crc
+        for byte in data:
+            crc ^= byte << 8
+            for _ in range(8):
+                if crc & 0x8000:
+                    crc = (crc << 1) ^ poly
+                else:
+                    crc <<= 1
+                crc &= 0xffff  # Keep CRC within 16 bits
+        return crc
+
+
+    def finalize_config(self):
+        finalize_cmd = self.commander.finalize_config()
+        crc = self.calc_crc(finalize_cmd)
+        finalize_cmd_with_crc = finalize_cmd + crc.to_bytes(2, 'big')  # Add CRC to the end of the command
+        self.command_queue.put(finalize_cmd_with_crc)
+
 
 def main():
     
