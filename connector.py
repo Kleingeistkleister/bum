@@ -270,7 +270,7 @@ class SerialHandler:
         self.data = data_streamlines[-1]
 
 
-def create_serial_handler(controller, serialport, baud=None, canbus_iface=None, canbus_nodeid=64):
+def create_serial_handler(reactor, serialport, baud=None, canbus_iface=None, canbus_nodeid=64):
     # Create option parser
     opts = optparse.OptionParser()
     opts.add_option("-v", action="store_true", dest="verbose",
@@ -288,4 +288,4 @@ def create_serial_handler(controller, serialport, baud=None, canbus_iface=None, 
     options.baud = baud
     options.canbus_iface = canbus_iface
     options.canbus_nodeid = canbus_nodeid
-    return SerialHandler(controller.reactor,  options.canbus_iface, options.canbus_nodeid)
+    return SerialHandler(reactor,  options.canbus_iface, options.canbus_nodeid)

@@ -16,13 +16,12 @@ class Controller:
         self.commander = commander.CommandGenerator()
         self.command_queue = queue.Queue()
         self.reactor = reactor.Reactor()
-        self.oid = 0
+        self.oid = 0        
         
+
         self.dmx_universe = 0
         self.dmx_start_address = 1
-        self.dmx_channel_mode = 4
-        self.serial_handler = None
-       
+        self.dmx_channel_mode = 4  
         self.dmx_address = self.dmx_start_address
        
         self.init_commands = []
@@ -30,6 +29,12 @@ class Controller:
         self.steppers = self.initialize_steppers()
         self.artnet = stupidArtnet.StupidArtnetServer()  
         
+        serialport = "/dev/ttyACM0"  # Provide the serial port here
+        baud = 1000000  # Provide the baud rate here
+        canbus_iface = "can0"  # Provide the CAN bus interface here
+        canbus_nodeid = int("807d45b5bfeb",16)  # Provide the CAN bus node ID here
+
+        self.serial_handler = connector.create_serial_handler(self.reactor, serialport, baud, canbus_iface, canbus_nodeid)
         self.artnet_handler = self.artnet.register_listener( self.dmx_universe, callback_function=None)
 
         print(f"Controller created Universe: {self.dmx_universe} Start address: {self.dmx_start_address} Channel mode: {self.dmx_channel_mode}")
@@ -178,18 +183,15 @@ class Controller:
 
 
 def main():
-    serialport = "/dev/ttyACM0"  # Provide the serial port here
-    baud = 1000000  # Provide the baud rate here
-    canbus_iface = "can0"  # Provide the CAN bus interface here
-    canbus_nodeid = int("807d45b5bfeb",16)  # Provide the CAN bus node ID here
+ 
     print("Create Controller")
     controller = Controller()
     print("Create Serial Handler")
     
-    serial_handler = connector.create_serial_handler(controller, serialport, baud, canbus_iface, canbus_nodeid)
+    #serial_handler = connector.create_serial_handler(controller, serialport, baud, canbus_iface, canbus_nodeid)
     #connector.SerialHandler(controller, controller.reactor, serialport, baud, canbus_iface, canbus_nodeid)
     
-    controller.set_serial_handler(serial_handler)
+    #controller.set_serial_handler(serial_handler)
     # Access controller.stepper_commands to get the list of commands for initialization
     print("Stepper initialization commands:")
     while not controller.command_queue.empty():

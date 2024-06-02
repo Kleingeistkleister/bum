@@ -4,7 +4,7 @@
 # Copyright (C) 2016-2021  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import sys, optparse, os, re, logging
+import sys, optparse, os, re, logging, time
 import util, reactor, serialhdl, msgproto, clocksync
 
 help_txt = """
@@ -76,24 +76,47 @@ class KeyboardReader:
         self.ser.register_response(self.handle_output, '#output')
         self.mcu_freq = msgparser.get_constant_float('CLOCK_FREQ')
         self.output("="*20 + "       connected       " + "="*20)
+        
+        # Lists of pins
+        self.step_pins = ["PE2", "PF12", "PD7", "PD3", "PC9", "PA10"]
+        self.dir_pins = ["PB4", "PF11", "PD6", "PD2", "PC8", "PA14"]
+        self.enable_pins = ["PC11", "PB3", "PF10", "PD5", "PD1", "PA15"]
+        self.extra_pins = ["PA13"]
+
+        # Send commands for enable pins to enable them
+        for pin in self.enable_pins:
+            try:
+                self.ser.send(f"set_digital_out pin={pin} value=0")
+            except msgproto.error as e:
+                self.output(f"Error: {str(e)}")
+        
+        # Start toggling step pins
+        self.toggle_step_pins()
+
         return self.reactor.NEVER
-        
-        
+
+    def toggle_step_pins(self):
+        try:
+            while True:
+                for pin in self.step_pins:
+                    self.ser.send(f"set_digital_out pin={pin} value=1")
+                time.sleep(0.001)
+                for pin in self.step_pins:
+                    self.ser.send(f"set_digital_out pin={pin} value=0")
+                time.sleep(0.001)
+        except msgproto.error as e:
+            self.output(f"Error: {str(e)}")
+
     def output(self, msg):
         sys.stdout.write("%s\n" % (msg,))
         sys.stdout.flush()
-        
     def handle_default(self, params):
         tdiff = params['#receive_time'] - self.start_time
         msg = self.ser.get_msgparser().format_params(params)
         self.output("%07.3f: %s" % (tdiff, msg))
-        
     def handle_output(self, params):
         tdiff = params['#receive_time'] - self.start_time
         self.output("%07.3f: %s: %s" % (tdiff, params['#name'], params['#msg']))
-        
-        
-        
     def handle_suppress(self, params):
         pass
     def update_evals(self, eventtime):
@@ -124,35 +147,34 @@ class KeyboardReader:
             caddr = addr + (i << order)
             cmd = "debug_read order=%d addr=%d" % (order, caddr)
             params = self.ser.send_with_response(cmd, "debug_result")
-            vals.append(params['val'])
-        # Report data
-        if filename is None and order == 2:
-            # Common 32bit hex dump
-            for i in range((len(vals) + 3) // 4):
-                p = i * 4
-                hexvals = " ".join(["%08x" % (v,) for v in vals[p:p+4]])
-                self.output("%08x  %s" % (addr + p * 4, hexvals))
-            return
-        # Convert to byte format
-        data = bytearray()
-        for val in vals:
-            for b in range(bsize):
-                data.append((val >> (8 * b)) & 0xff)
-        data = data[:count]
+            vals += params['data']
+        # Output data
+        out = ""
+        for v in vals:
+            out += "%02x " % (v,)
+            if len(out) == 48:
+                self.output(out)
+                out = ""
+        if out:
+            self.output(out)
+        # Dump data to file if required
         if filename is not None:
-            f = open(filename, 'wb')
-            f.write(data)
-            f.close()
-            self.output("Wrote %d bytes to '%s'" % (len(data), filename))
-            return
-        for i in range((count + 15) // 16):
-            p = i * 16
-            paddr = addr + p
-            d = data[p:p+16]
-            hexbytes = " ".join(["%02x" % (v,) for v in d])
-            pb = "".join([chr(v) if v >= 0x20 and v < 0x7f else '.' for v in d])
-            o = "%08x  %-47s  |%s|" % (paddr, hexbytes, pb)
-            self.output("%s %s" % (o[:34], o[34:]))
+            self.output("Dumping to %s" % (filename,))
+            with open(filename, "wb") as f:
+                f.write(bytearray(vals))
+        # Output ascii representation
+        if 0:
+            out = ""
+            for v in vals:
+                if v >= 0x20 and v < 0x7f:
+                    out += chr(v)
+                else:
+                    out += '.'
+                if len(out) == 72:
+                    self.output(out)
+                    out = ""
+            if out:
+                self.output(out)
     def command_FILEDUMP(self, parts):
         self.command_DUMP(parts[1:], filename=parts[1])
     def command_DELAY(self, parts):
@@ -236,13 +258,14 @@ class KeyboardReader:
                 self.local_commands[parts[0]](parts)
                 return None
         return line
-    def process_data(self, data, eventtime):
-        self.data += data
+    def process_kbd(self, eventtime):
+        self.data += str(os.read(self.fd, 4096).decode())
+
         kbdlines = self.data.split('\n')
         for line in kbdlines[:-1]:
             line = line.strip()
             cpos = line.find('#')
-            if cpos >= 0:
+            if (cpos >= 0):
                 line = line[:cpos]
                 if not line:
                     continue
@@ -254,7 +277,6 @@ class KeyboardReader:
             except msgproto.error as e:
                 self.output("Error: %s" % (str(e),))
         self.data = kbdlines[-1]
-
 
 def main():
     usage = "%prog [options] <serialdevice>"
