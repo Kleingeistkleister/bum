@@ -44,7 +44,7 @@ class DMXStepper:
         #set up stepper on mcu, with the command config_stepper   0 i for inverted
         #init_command = self.create_config_command()
         init_command = self.config_stepper_command()
-        self.controller.add_init_command(init_command)
+        self.controller.command_queue.put(init_command)
            
   
 
