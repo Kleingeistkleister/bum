@@ -1,5 +1,11 @@
-import sys, os, re, logging, optparse
-import util, reactor, serialhdl, msgproto, clocksync, queue
+#!/usr/bin/env python2
+# Script to implement a test console with firmware over serial port
+#
+# Copyright (C) 2016-2021  Kevin O'Connor <kevin@koconnor.net>
+#
+# This file may be distributed under the terms of the GNU GPLv3 license.
+import sys, optparse, os, re, logging
+import util, reactor, serialhdl, msgproto, clocksync
 
 help_txt = """
   This is a debugging console for the Klipper micro-controller.
@@ -24,22 +30,21 @@ help_txt = """
 
 re_eval = re.compile(r'\{(?P<eval>[^}]*)\}')
 
-class SerialHandler:
-    def __init__(self,controller,  serialport, baud=None, canbus_iface=None, canbus_nodeid=None):
-        self.controller = controller        
-        
+class KeyboardReader:
+    def __init__(self, reactor, serialport, baud, canbus_iface, canbus_nodeid):
         self.serialport = serialport
         self.baud = baud
         self.canbus_iface = canbus_iface
         self.canbus_nodeid = canbus_nodeid
         self.ser = serialhdl.SerialReader(reactor)
+        self.reactor = reactor
         self.start_time = reactor.monotonic()
         self.clocksync = clocksync.ClockSync(self.reactor)
         self.fd = sys.stdin.fileno()
         util.set_nonblock(self.fd)
         self.mcu_freq = 0
         self.data = ""
-        reactor.register_fd(self.fd, self.process_data_stream)
+        reactor.register_fd(self.fd, self.process_kbd)
         reactor.register_callback(self.connect)
         self.local_commands = {
             "SET": self.command_SET,
@@ -49,21 +54,12 @@ class SerialHandler:
             "LIST": self.command_LIST, "HELP": self.command_HELP,
         }
         self.eval_globals = {}
-
-        self.data_interface = None
-        self.serial_queue = queue.Queue()
-        
-        
-
-        print(f"SerialHandler created with serialport: {self.serialport} baud: {self.baud} canbus_iface: {self.canbus_iface} canbus_nodeid: {self.canbus_nodeid}")
-        self.connect(self.reactor.monotonic())
-    
-
     def connect(self, eventtime):
         self.output(help_txt)
         self.output("="*20 + " attempting to connect " + "="*20)
         if self.canbus_iface is not None:
-            self.ser.connect_canbus(self.serialport, self.canbus_nodeid, self.canbus_iface)
+            self.ser.connect_canbus(self.serialport, self.canbus_nodeid,
+                                    self.canbus_iface)
         elif self.baud:
             self.ser.connect_uart(self.serialport, self.baud)
         else:
@@ -71,35 +67,38 @@ class SerialHandler:
         msgparser = self.ser.get_msgparser()
         message_count = len(msgparser.get_messages())
         version, build_versions = msgparser.get_version_info()
-        self.output("Loaded %d commands (%s / %s)" % (message_count, version, build_versions))
-        self.output("MCU config: %s" % (" ".join(["%s=%s" % (k, v) for k, v in msgparser.get_constants().items()])))
+        self.output("Loaded %d commands (%s / %s)"
+                    % (message_count, version, build_versions))
+        self.output("MCU config: %s" % (" ".join(
+            ["%s=%s" % (k, v) for k, v in msgparser.get_constants().items()])))
         self.clocksync.connect(self.ser)
         self.ser.handle_default = self.handle_default
         self.ser.register_response(self.handle_output, '#output')
         self.mcu_freq = msgparser.get_constant_float('CLOCK_FREQ')
         self.output("="*20 + "       connected       " + "="*20)
         return self.reactor.NEVER
-
+        
+        
     def output(self, msg):
         sys.stdout.write("%s\n" % (msg,))
         sys.stdout.flush()
-    
+        
     def handle_default(self, params):
         tdiff = params['#receive_time'] - self.start_time
         msg = self.ser.get_msgparser().format_params(params)
         self.output("%07.3f: %s" % (tdiff, msg))
-    
+        
     def handle_output(self, params):
         tdiff = params['#receive_time'] - self.start_time
         self.output("%07.3f: %s: %s" % (tdiff, params['#name'], params['#msg']))
-    
+        
+        
+        
     def handle_suppress(self, params):
         pass
-    
     def update_evals(self, eventtime):
         self.eval_globals['freq'] = self.mcu_freq
         self.eval_globals['clock'] = self.clocksync.get_clock(eventtime)
-    
     def command_SET(self, parts):
         val = parts[2]
         try:
@@ -107,7 +106,6 @@ class SerialHandler:
         except ValueError:
             pass
         self.eval_globals[parts[1]] = val
-    
     def command_DUMP(self, parts, filename=None):
         # Extract command args
         try:
@@ -142,8 +140,9 @@ class SerialHandler:
                 data.append((val >> (8 * b)) & 0xff)
         data = data[:count]
         if filename is not None:
-            with open(filename, 'wb') as f:
-                f.write(data)
+            f = open(filename, 'wb')
+            f.write(data)
+            f.close()
             self.output("Wrote %d bytes to '%s'" % (len(data), filename))
             return
         for i in range((count + 15) // 16):
@@ -154,10 +153,8 @@ class SerialHandler:
             pb = "".join([chr(v) if v >= 0x20 and v < 0x7f else '.' for v in d])
             o = "%08x  %-47s  |%s|" % (paddr, hexbytes, pb)
             self.output("%s %s" % (o[:34], o[34:]))
-    
     def command_FILEDUMP(self, parts):
         self.command_DUMP(parts[1:], filename=parts[1])
-    
     def command_DELAY(self, parts):
         try:
             val = int(parts[1])
@@ -169,7 +166,6 @@ class SerialHandler:
         except msgproto.error as e:
             self.output("Error: %s" % (str(e),))
             return
-    
     def command_FLOOD(self, parts):
         try:
             count = int(parts[1])
@@ -179,7 +175,8 @@ class SerialHandler:
             return
         msg = ' '.join(parts[3:])
         delay_clock = int(delay * self.mcu_freq)
-        msg_clock = int(self.clocksync.get_clock(self.reactor.monotonic()) + self.mcu_freq * .200)
+        msg_clock = int(self.clocksync.get_clock(self.reactor.monotonic())
+                        + self.mcu_freq * .200)
         try:
             for i in range(count):
                 next_clock = msg_clock + delay_clock
@@ -188,7 +185,6 @@ class SerialHandler:
         except msgproto.error as e:
             self.output("Error: %s" % (str(e),))
             return
-    
     def command_SUPPRESS(self, parts):
         oid = None
         try:
@@ -199,15 +195,15 @@ class SerialHandler:
             self.output("Error: %s" % (str(e),))
             return
         self.ser.register_response(self.handle_suppress, name, oid)
-    
     def command_STATS(self, parts):
         curtime = self.reactor.monotonic()
-        self.output(' '.join([self.ser.stats(curtime), self.clocksync.stats(curtime)]))
-    
+        self.output(' '.join([self.ser.stats(curtime),
+                              self.clocksync.stats(curtime)]))
     def command_LIST(self, parts):
         self.update_evals(self.reactor.monotonic())
         mp = self.ser.get_msgparser()
-        cmds = [msgformat for msgtag, msgtype, msgformat in mp.get_messages() if msgtype == 'command']
+        cmds = [msgformat for msgtag, msgtype, msgformat in mp.get_messages()
+                if msgtype == 'command']
         out = "Available mcu commands:"
         out += "\n  ".join([""] + sorted(cmds))
         out += "\nAvailable artificial commands:"
@@ -216,10 +212,8 @@ class SerialHandler:
         lvars = sorted(self.eval_globals.items())
         out += "\n  ".join([""] + ["%s: %s" % (k, v) for k, v in lvars])
         self.output(out)
-    
     def command_HELP(self, parts):
         self.output(help_txt)
-    
     def translate(self, line, eventtime):
         evalparts = re_eval.split(line)
         if len(evalparts) > 1:
@@ -227,10 +221,10 @@ class SerialHandler:
             try:
                 for i in range(1, len(evalparts), 2):
                     e = eval(evalparts[i], dict(self.eval_globals))
-                    if isinstance(e, float):
+                    if type(e) == type(0.):
                         e = int(e)
                     evalparts[i] = str(e)
-            except Exception as e:
+            except:
                 self.output("Unable to evaluate: %s" % (line,))
                 return None
             line = ''.join(evalparts)
@@ -242,16 +236,10 @@ class SerialHandler:
                 self.local_commands[parts[0]](parts)
                 return None
         return line
-    
-    def set_data_interface(self, data_interface):
-        self.data_interface = data_interface
-    
-    def process_data_stream(self, eventtime):
-        self.artnet_data = self.controller.command_queue.get().decode()
-        print(self.artnet_data)
-        #self.data += str(os.read(self.fd, 4096).decode())
-        data_streamlines = self.data.split('\n')
-        for line in data_streamlines[:-1]:
+    def process_data(self, data, eventtime):
+        self.data += data
+        kbdlines = self.data.split('\n')
+        for line in kbdlines[:-1]:
             line = line.strip()
             cpos = line.find('#')
             if cpos >= 0:
@@ -263,16 +251,14 @@ class SerialHandler:
                 continue
             try:
                 self.ser.send(msg)
-                self.controller.debug_print("Sent: %s" % (msg,))
-                
             except msgproto.error as e:
                 self.output("Error: %s" % (str(e),))
-        self.data = data_streamlines[-1]
+        self.data = kbdlines[-1]
 
 
-def create_serial_handler(controller, serialport, baud=None, canbus_iface=None, canbus_nodeid=64):
-    # Create option parser
-    opts = optparse.OptionParser()
+def main():
+    usage = "%prog [options] <serialdevice>"
+    opts = optparse.OptionParser(usage)
     opts.add_option("-v", action="store_true", dest="verbose",
                     help="enable debug messages")
     opts.add_option("-b", "--baud", type="int", dest="baud", help="baud rate")
@@ -280,12 +266,28 @@ def create_serial_handler(controller, serialport, baud=None, canbus_iface=None, 
                     help="Use CAN bus interface; serialdevice is the chip UUID")
     opts.add_option("-i", "--canbus_nodeid", type="int", dest="canbus_nodeid",
                     default=64, help="The CAN nodeid to use (default 64)")
-    
-    # Parse options
-    options, _ = opts.parse_args([])
-    
-    # Set provided values
-    options.baud = baud
-    options.canbus_iface = canbus_iface
-    options.canbus_nodeid = canbus_nodeid
-    return SerialHandler(controller.reactor,  options.canbus_iface, options.canbus_nodeid)
+    options, args = opts.parse_args()
+    if len(args) != 1:
+        opts.error("Incorrect number of arguments")
+    serialport = args[0]
+
+    baud = options.baud
+    if baud is None and not (serialport.startswith("/dev/rpmsg_")
+                             or serialport.startswith("/tmp/")):
+        baud = 250000
+
+    debuglevel = logging.INFO
+    if options.verbose:
+        debuglevel = logging.DEBUG
+    logging.basicConfig(level=debuglevel)
+
+    r = reactor.Reactor()
+    kbd = KeyboardReader(r, serialport, baud, options.canbus_iface,
+                         options.canbus_nodeid)
+    try:
+        r.run()
+    except KeyboardInterrupt:
+        sys.stdout.write("\n")
+
+if __name__ == '__main__':
+    main()

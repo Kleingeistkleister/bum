@@ -181,11 +181,13 @@ def main():
     serialport = "/dev/ttyACM0"  # Provide the serial port here
     baud = 1000000  # Provide the baud rate here
     canbus_iface = "can0"  # Provide the CAN bus interface here
-    canbus_nodeid = int(807d45b5bfeb,16)  # Provide the CAN bus node ID here
+    canbus_nodeid = int("807d45b5bfeb",16)  # Provide the CAN bus node ID here
     print("Create Controller")
     controller = Controller()
     print("Create Serial Handler")
-    serial_handler = connector.SerialHandler(controller, controller.reactor, serialport, baud, canbus_iface, canbus_nodeid)
+    
+    serial_handler = connector.create_serial_handler(controller, serialport, baud, canbus_iface, canbus_nodeid)
+    #connector.SerialHandler(controller, controller.reactor, serialport, baud, canbus_iface, canbus_nodeid)
     
     controller.set_serial_handler(serial_handler)
     # Access controller.stepper_commands to get the list of commands for initialization
