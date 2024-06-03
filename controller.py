@@ -11,58 +11,54 @@ from stupidArtnet import StupidArtnetServer
 # parra 5:
 # parra 6: a2bb949d00a8
   
-    
 class Controller:
-    def __init__(self, reactor , main_handler):
+    def __init__(self, reactor, main_handler, artnet_handler):
         self.reactor = reactor
         self.main_handler = main_handler
         self.commander = commander.CommandGenerator()
         self.command_queue = queue.Queue()
-        
-        
+        self.artnet_handler = artnet_handler
+
         self.oid = 0        
         self.oid_list = []
         self.init_commands = []
-        
-         #create stepper objects and store commands to the init list
+
+        # Create stepper objects and store commands to the init list
         self.steppers = self.initialize_steppers()
-        
 
         self.dmx_universe = 0
         self.dmx_start_address = 1
         self.dmx_channel_mode = 4  
         self.dmx_address = self.dmx_start_address
-        self.dmx_values_new = [] * ((self.dmx_channel_mode) + len(self.steppers))
+        self.dmx_values_new = [0] * (self.dmx_channel_mode + len(self.steppers))
         self.dmx_values_old = self.dmx_values_new
-                                                   
+        self.artnet_listener = artnet_handler.register_listener(self.dmx_universe, callback_function=None)     
 
+        self.is_shutdown = False
 
-        print("########sadsad########")
-        for cmd in self.init_commands:
-          print(cmd)
-        #create artnet handler
-        self.artnet = stupidArtnet.StupidArtnetServer()  
-        #register listener
-        self.artnet_handler = self.artnet.register_listener( self.dmx_universe, callback_function=None)
-
-
-
-        #end config
-        print(f"Controller created Universe: {self.dmx_universe} Start address: {self.dmx_start_address} Channel mode: {self.dmx_channel_mode}")
-  
         
+        # Create artnet handler
+        self.artnet = stupidArtnet.StupidArtnetServer()  
+        # Register listener
+        self.artnet_handler = self.artnet.register_listener(self.dmx_universe, callback_function=None)
+
+        self.allocate_oids()
+        self.finalize_config()
+        # End config
+        print("######################################")
+        print(f"Controller created Universe: {self.dmx_universe} Start address: {self.dmx_start_address} Channel mode: {self.dmx_channel_mode}")
+        print("######################################")
+        for cmd in self.init_commands:
+            print(cmd)
+
     def add_init_command(self, command):
         self.init_commands.append(command)
-        
+
     def get_commander(self):
         return self.commander
 
-    # create a dmx channel address for stepper objects
-        
-   
-
     def readDmx(self):
-        buffer = self.artnet_handler.getBuffer(self.artnet)
+        buffer = self.artnet_handler.get_buffer(self.artnet_listener)
         if buffer:
             print(buffer)
             self.dmx_values_old = self.dmx_values_new
@@ -75,23 +71,18 @@ class Controller:
         return self.oid - 1
 
     def set_stepper_dmx_values(self, stepper):
-        stepper.set_dmx_value.dmx_values[0:self.dmx_channel_mode-1]
+        stepper.set_dmx_value.dmx_values[0:self.dmx_channel_mode - 1]
 
-
-    #write init commands for steppers
     def write_stepper_config(self):
         for cmd in self.init_commands:
             print(cmd)
-            #self._serial.write(cmd)
+            self.main_handler.send_msg(cmd)
             time.sleep(0.01)
-            
-    def calc_crc(self):
-        return 0
-        
+
     def enable_stepper(self, stepper):
         self.command_queue.put(self.commander.enable_stepper(stepper.get_oid()))
-        
-    def stepper_set_next_step_dir(self,stepper, direction):
+
+    def stepper_set_next_step_dir(self, stepper, direction):
         cmd = self.command_queue.put(self.commander.stepper_set_next_step_dir(stepper.get_oid(), direction))
 
     def initialize_steppers(self):
@@ -122,30 +113,27 @@ class Controller:
         for config in stepper_configs:
             oid = self.get_new_oid()
             self.oid_list.append(oid)
-            #create steppers from config
+            # Create steppers from config
             dmx_stepper = stepper.DMXStepper(
                 self, oid, config['step_pin'], config['dir_pin'], config['en_pin'], config['uart_pin'], config['uart_diag_pin'], 
                 config['endstop_pin'], config['microsteps'], config['rotation_distance'], config['full_steps_per_rotation'], 
                 config['gear_ratio'], config['max_velocity'], config['max_accel'], config['driver'], config['uart_address'], 
-                config['stealthchop_threshold'],
-                
-           
+                config['stealthchop_threshold']
             )
             steppers.append(dmx_stepper)
-            
 
         return steppers
-    
-        
-    def finalize_config(self):
-        self.command_queue.put(self.commander.finalize_config())
 
-  
-        
-    def alloc_oids(self):
-        self.command_queue.put(self.commander.alloc_oids(self.oid))
-        
-    def calc_crc(data, poly=0x1021, init_crc=0xffff):
+    def get_config(self):
+        config_response = self.conector(self.commander.get_config())
+        return config_response
+
+    def allocate_oids(self):
+        self.add_init_command(self.commander.allocate_oids(self.oid))
+
+    def calc_crc(self, data, poly=0x1021, init_crc=0xffff):
+        if isinstance(data, str):
+            data = data.encode()  # Convert to bytes if data is a string
         crc = init_crc
         for byte in data:
             crc ^= byte << 8
@@ -157,22 +145,24 @@ class Controller:
                 crc &= 0xffff  # Keep CRC within 16 bits
         return crc
 
-    def get_config(self):
-        config_response = self.conector(self.commander.get_config())
-        return config_response
-    
-
-
     def finalize_config(self):
         finalize_cmd = self.commander.finalize_config()
-        crc = self.calc_crc(finalize_cmd)
-        finalize_cmd_with_crc = finalize_cmd + crc.to_bytes(2, 'big')  # Add CRC to the end of the command
-        self.command_queue.put(finalize_cmd_with_crc)
+        if isinstance(finalize_cmd, str):
+            finalize_cmd = finalize_cmd.encode()  # Convert to bytes if finalize_cmd is a string
+        crc = 100 #self.calc_crc(finalize_cmd)
+        #finalize_cmd_with_crc = finalize_cmd + crc.to_bytes(2, 'big')  # Add CRC to the end of the command
+        self.add_init_command("finalize_config crc=100")
 
 
+    def run(self):
+        while 1 and not self.is_shutdown:
+            print("#######################")
+            self.readDmx()
+            self.handle_commands()
 
-
-
-
-
-
+    def handle_commands(self):
+        while not self.command_queue.empty():
+            print("get commands")
+            cmd = self.command_queue.get()
+            self.main_handler.process_command(cmd)
+        print("no commands")    

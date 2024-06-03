@@ -5,7 +5,8 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import sys, optparse, os, re, logging, time 
-import util, reactor, serialhdl, msgproto, clocksync
+import util, reactor, serialhdl, msgproto, clocksync, threading
+from stupidArtnet import StupidArtnetServer
 
 help_txt = """
   This is a debugging console for the Klipper micro-controller.
@@ -81,16 +82,13 @@ class MainHandler:
         self.step_pins = ["PE2", "PF12", "PD7", "PD3", "PC9", "PA10"]
         self.dir_pins = ["PB4", "PF11", "PD6", "PD2", "PC8", "PA14"]
         self.enable_pins = ["PA13", "PC11", "PB3", "PF10", "PD5", "PD1", "PA15"]
-        self.extra_pins = ["PA13"]
+        self.extra_pins = "PA13"
 
-        # Send commands for enable pins to enable them
-        for pin in self.extra_pins:
-            try:
-                print(f"set_digital_out pin={pin} value=0")
-                self.ser.send(f"set_digital_out pin={pin} value=0")
-            except msgproto.error as e:
-                self.output(f"Error: {str(e)}")
-        
+
+        #print(f"set_digital_out pin={extra_pins} value=0")
+        self.ser.send(f"set_digital_out pin=PA13 value=0")
+        print("################################")
+       
         # Start toggling step pins
         #self.toggle_step_pins()
 
@@ -260,9 +258,18 @@ class MainHandler:
                 self.local_commands[parts[0]](parts)
                 return None
         return line
-    def process_kbd(self, eventtime):
-        self.data += str(os.read(self.fd, 4096).decode())
 
+
+    def send_msg(self, msg):
+        self.process_kbd(msg, self.reactor.monotonic())
+        print(f"### send_msg: {msg} ###")
+        
+
+
+    def process_kbd(self,msg, eventtime):
+     
+        print(f"####################### {msg}")
+        self.data += msg
         kbdlines = self.data.split('\n')
         for line in kbdlines[:-1]:
             line = line.strip()
@@ -280,8 +287,14 @@ class MainHandler:
                 self.output("Error: %s" % (str(e),))
         self.data = kbdlines[-1]
 
+def artnet_test_callback(data):
+    print(data)
+    
+
 def main():
     import controller
+
+    threads =[]
 
     usage = "%prog [options] <serialdevice>"
     opts = optparse.OptionParser(usage)
@@ -301,27 +314,32 @@ def main():
     if baud is None and not (serialport.startswith("/dev/rpmsg_")
                              or serialport.startswith("/tmp/")):
         baud = 250000
-    print("#########################################")
+  
     debuglevel = logging.INFO
     if options.verbose:
         debuglevel = logging.DEBUG
     logging.basicConfig(level=debuglevel)
-
-    r = reactor.Reactor()
-    print("#########################################")
-    main_handler = MainHandler(r, serialport, baud, options.canbus_iface,
-                         options.canbus_nodeid)
-                         
-    controller = controller.Controller(r, main_handler)
+    ##################################################################
     
+
+    # Create the reactor
+    r = reactor.Reactor()
+    # Create the main handler
+    main_handler = MainHandler(r, serialport, baud, options.canbus_iface,options.canbus_nodeid)
+    artnet_handler = StupidArtnetServer()
+    
+   
+    #create controller object and write config to board
+    controller = controller.Controller(r, main_handler , artnet_handler)
     controller.write_stepper_config()# write config to board
-
-
-
-    #try:
-     #   r.run()
-    #except KeyboardInterrupt:
-     #   sys.stdout.write("\n")
+    
+    controller_thread = threading.Thread(target=controller.run)
+    
+    threads.append(r)
+    threads.append(controller_thread)
+    r.run()
+    controller_thread = threading.Thread(target=controller.run)
+    
 
 if __name__ == '__main__':
     main()
