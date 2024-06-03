@@ -292,9 +292,10 @@ class CommandGenerator:
 
     def queue_pwm_out(self, oid, value, cycle):
         return f"queue_pwm_out oid={oid} value={value} cycle={cycle}"
+    
+    def queue_step(self, oid, interval, count, add):
+        return f"queue_step oid={oid} interval={interval} count={count} add={add}"
 
-    def queue_step(self, oid, dir, steps):
-        return f"queue_step oid={oid} dir={dir} steps={steps}"
 
     def reset(self):
         return "reset"

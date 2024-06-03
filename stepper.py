@@ -6,7 +6,7 @@ import controller
 class DMXStepper:
     def __init__(self,controller, oid, step_pin, dir_pin, en_pin, uart_pin, uart_diag_pin, endstop_pin, microsteps, 
                  rotation_distance, full_steps_per_rotation, gear_ratio, max_velocity, max_accel, driver, 
-                 uart_address, stealthchop_threshold, dmx_start_address, dmx_channel_mode):
+                 uart_address, stealthchop_threshold):
         self.controller                     = controller
         self.commander                      = controller.get_commander()
         self.oid                            = oid
@@ -25,10 +25,7 @@ class DMXStepper:
         self.driver                         = driver
         self.uart_address                   = uart_address
         self.stealthchop_threshold          = stealthchop_threshold
-        self.dmx_start_address              = dmx_start_address
-        self.dmx_channel_mode               = dmx_channel_mode
-        self.dmx_values_old                 = [0] * dmx_channel_mode
-        self.dmx_values_new                 = [0] * dmx_channel_mode
+
         self.pulse_ticks                    = 0.00010   ########################################
         self.debug_state                    = True    
         
@@ -37,22 +34,34 @@ class DMXStepper:
         if self.debug_state:
             
             print(f"Stepper {self.oid} created with stepPin {self.step_pin} and dirPin {self.dir_pin} enablePin {self.en_pin}")
-            print(f"Stepper {self.oid} DMX start address: {self.dmx_start_address} DMX channel mode: {self.dmx_channel_mode}")
-
+      
 
         # add commands to controller
         #set up stepper on mcu, with the command config_stepper   0 i for inverted
         #init_command = self.create_config_command()
-        init_command = self.config_stepper_command()
-        self.controller.command_queue.put(init_command)
+        init_command = self.config_stepper_command()        
+        self.debug_print(f"{init_command}")
+        
+        self.controller.add_init_command(init_command)
            
-  
+    def send_move_queue_command(self):
+        self.controller.command_queue.put(self.create_move_queue_command())
+        
+
+    #queue_step oid=%c interval=%u count=%hu add=%hi
+    def create_move_queue_command(self, interval, count , add):
+        move_queue_command = f"queue_step oid={self.oid} interval={interval} count={count} add={add}"
+        
+        return move_queue_command
+
 
     def config_stepper_command(self):
-        return self.commander.config_stepper(self.oid, self.step_pin, self.dir_pin, 0 , self.pulse_ticks)
+        config = self.controller.get_commander().config_stepper(self.oid, self.step_pin, self.dir_pin, 0 , self.pulse_ticks)
+        
+        return config
 
     def debug_print(self, msg):
-        print(f"Stepper debug:                   {self.oid}: {msg}")
+        print(f"Stepper debug OID: {self.oid}:   {msg}")
 
 
     #################################################################################################################################
@@ -109,17 +118,6 @@ class DMXStepper:
     def get_stealthchop_threshold(self):
         return self.stealthchop_threshold
 
-    def get_dmx_start_address(self):
-        return self.dmx_start_address
-
-    def get_dmx_channel_mode(self):
-        return self.dmx_channel_mode
-
-    def get_dmx_values_old(self):
-        return self.dmx_values_old
-    
-    def get_dmx_values_new(self):
-        return self.dmx_values_new
 
 
     #################################################################################################################################
@@ -177,12 +175,5 @@ class DMXStepper:
     def set_stealthchop_threshold(self, stealthchop_threshold):
         self.stealthchop_threshold = stealthchop_threshold
 
-    def set_dmx_start_address(self, dmx_start_address):
-        self.dmx_start_address = dmx_start_address
 
-    def set_dmx_channel_mode(self, dmx_channel_mode):
-        self.dmx_channel_mode = dmx_channel_mode
-
-    def set_dmx_values_old(self, dmx_values_old):
-        self.dmx_values_old = dmx_values_old
         

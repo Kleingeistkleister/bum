@@ -1,5 +1,6 @@
+from re import S
 import threading, stupidArtnet
-import time, queue, commander,connector, stepper, reactor, sys, logging
+import time, queue, commander, connector, stepper, reactor, sys, logging , optparse 
 from stupidArtnet import StupidArtnetServer
 
 #uuids
@@ -12,44 +13,44 @@ from stupidArtnet import StupidArtnetServer
   
     
 class Controller:
-    def __init__(self):
+    def __init__(self, reactor , main_handler):
+        self.reactor = reactor
+        self.main_handler = main_handler
         self.commander = commander.CommandGenerator()
         self.command_queue = queue.Queue()
-        self.reactor = reactor.Reactor()
+        
+        
         self.oid = 0        
+        self.oid_list = []
+        self.init_commands = []
+        
+         #create stepper objects and store commands to the init list
+        self.steppers = self.initialize_steppers()
         
 
         self.dmx_universe = 0
         self.dmx_start_address = 1
         self.dmx_channel_mode = 4  
         self.dmx_address = self.dmx_start_address
-       
-        self.init_commands = []
-        #create stepper objects and store commands to the init list
-        self.steppers = self.initialize_steppers()
-        self.artnet = stupidArtnet.StupidArtnetServer()  
-        
-        serialport = "/dev/ttyACM0"  # Provide the serial port here
-        baud = 1000000  # Provide the baud rate here
-        canbus_iface = "can0"  # Provide the CAN bus interface here
-        canbus_nodeid = int("807d45b5bfeb",16)  # Provide the CAN bus node ID here
+        self.dmx_values_new = [] * ((self.dmx_channel_mode) + len(self.steppers))
+        self.dmx_values_old = self.dmx_values_new
+                                                   
 
-        self.serial_handler = connector.create_serial_handler(self.reactor, serialport, baud, canbus_iface, canbus_nodeid)
+
+        print("########sadsad########")
+        for cmd in self.init_commands:
+          print(cmd)
+        #create artnet handler
+        self.artnet = stupidArtnet.StupidArtnetServer()  
+        #register listener
         self.artnet_handler = self.artnet.register_listener( self.dmx_universe, callback_function=None)
 
+
+
+        #end config
         print(f"Controller created Universe: {self.dmx_universe} Start address: {self.dmx_start_address} Channel mode: {self.dmx_channel_mode}")
   
         
-        #try:
-            #self.reactor.run()
-        #except KeyboardInterrupt:
-            #sys.stdout.write("\n")
-            
-        #while not self.command_queue.empty():
-          #  self._serial.write(self.command_queue.get())
-           # time.sleep(0.01)
-
-
     def add_init_command(self, command):
         self.init_commands.append(command)
         
@@ -58,15 +59,16 @@ class Controller:
 
     # create a dmx channel address for stepper objects
         
-    def get_new_dmx_address(self):
-        self.dmx_address += self.dmx_channel_mode
-        return self.dmx_address - self.dmx_channel_mode
+   
 
     def readDmx(self):
         buffer = self.artnet_handler.getBuffer(self.artnet)
-        self.valA = int(buffer[self.channelA - 1])
-        self.valB = int(buffer[self.channelB - 1])
-        self.valC = int(buffer[self.channelC - 1])
+        if buffer:
+            print(buffer)
+            self.dmx_values_old = self.dmx_values_new
+            self.dmx_values_new = buffer
+        else:
+            print("no artnet data received")
 
     def get_new_oid(self):
         self.oid += 1
@@ -79,7 +81,8 @@ class Controller:
     #write init commands for steppers
     def write_stepper_config(self):
         for cmd in self.init_commands:
-            self._serial.write(cmd)
+            print(cmd)
+            #self._serial.write(cmd)
             time.sleep(0.01)
             
     def calc_crc(self):
@@ -118,7 +121,7 @@ class Controller:
 
         for config in stepper_configs:
             oid = self.get_new_oid()
-            dmx_address = self.get_new_dmx_address()
+            self.oid_list.append(oid)
             #create steppers from config
             dmx_stepper = stepper.DMXStepper(
                 self, oid, config['step_pin'], config['dir_pin'], config['en_pin'], config['uart_pin'], config['uart_diag_pin'], 
@@ -126,19 +129,13 @@ class Controller:
                 config['gear_ratio'], config['max_velocity'], config['max_accel'], config['driver'], config['uart_address'], 
                 config['stealthchop_threshold'],
                 
-                #dmx values
-                dmx_address, self.dmx_channel_mode
-                
+           
             )
             steppers.append(dmx_stepper)
             
 
         return steppers
     
-
-    def set_serial_handler(self, serial_handler):
-    
-        self.serial_handler = serial_handler
         
     def finalize_config(self):
         self.command_queue.put(self.commander.finalize_config())
@@ -173,31 +170,9 @@ class Controller:
         self.command_queue.put(finalize_cmd_with_crc)
 
 
-        def run(self):
-            while True:
-                if not self.command_queue.empty():
-                    self.serial_handler.write(self.command_queue.get())
-                    time.sleep(0.01)
-                else:
-                    time.sleep(0.01)
 
 
-def main():
- 
-    print("Create Controller")
-    controller = Controller()
-    print("Create Serial Handler")
-    
-    #serial_handler = connector.create_serial_handler(controller, serialport, baud, canbus_iface, canbus_nodeid)
-    #connector.SerialHandler(controller, controller.reactor, serialport, baud, canbus_iface, canbus_nodeid)
-    
-    #controller.set_serial_handler(serial_handler)
-    # Access controller.stepper_commands to get the list of commands for initialization
-    print("Stepper initialization commands:")
-    while not controller.command_queue.empty():
-        cmd = controller.command_queue.get()
-        print(cmd)
 
-if __name__ == "__main__":
-    main()
+
+
 
